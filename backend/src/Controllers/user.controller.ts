@@ -3,120 +3,128 @@ import { injectable, container } from "tsyringe";
 import { UserService } from "../Services/user.services";
 import AsyncHandler from "../Middlewares/asyncHandler.middleware";
 import ApiResponse from "../Utils/apiResponse.model";
-import { IUser, Role } from "../Models/User";
+import { IUser } from "../Models/User";
 import passport from "passport";
 import CustomError from "../Utils/customError.model";
+import { Role } from "../Models/Role";
 
 @injectable()
 class UserController {
-  private roles: Role[] = [];
+  private message: string = "No message provided.";
+  private data: Partial<IUser> = {};
+
   constructor(
     private userService: UserService,
-    private asyncHandler: AsyncHandler
+    private asyncHandler: AsyncHandler,
+    private response: ApiResponse<Partial<IUser>>
   ) {}
 
-  // getUser = this.asyncHandler.handle(
-  //   async (req: Request, res: Response, next: NextFunction) => {
-  //     const response = container.resolve(ApiResponse<IUser>);
-
-  //     const userId = req.params.id;
-
-  //     const user = await this.userService.getUsers();
-
-  //     response.setResponseSuccessful("Successful.");
-  //     response.setData(user as any);
-
-  //     res.json(response.toJSON());
-  //   }
-  // );
-
-  setUsersSelectedRole = this.asyncHandler.handle(
+  setUsersSelectedRole = this.asyncHandler.handler(
     async (req: Request, res: Response, next: NextFunction) => {
       const { role }: { role: string } = req.body;
 
-      if (!req.isAuthenticated()) {
-        throw new CustomError("User not authenticated.", { statusCode: 401 });
-      }
+      await this.userService.verifyAndSelectRole(role, req.user as IUser);
 
-      const roleExists = (req.user as IUser).roles.some(
-        (userRole: Role) => userRole.roleName === role
-      );
+      this.message = `Role set to ${role}.`;
 
-      if (!roleExists) {
-        throw new CustomError("Invalid role selection.", { statusCode: 400 });
-      }
+      this.data = { ...(req.user as IUser).toObject(), password: "" };
 
-      (req.user as IUser).selectedRole = role;
+      this.response.setSuccessfulResponse(this.message, this.data);
 
-      await (req.user as IUser).save();
-
-      return res.json({ message: `Role set to ${role}` });
+      return res.status(200).json(this.response.toJSON());
     }
   );
 
-  createUser = this.asyncHandler.handle(
+  createUser = this.asyncHandler.handler(
     async (req: Request, res: Response, next: NextFunction) => {
-      // const response =
-      //   container.resolve<ApiResponse<Partial<IUser>>>(ApiResponse);
-      const response = container.resolve(ApiResponse<Role[]>);
-
       const user = await this.userService.createUser(req.body);
 
-      response.setResponseSuccessful("Successful.");
+      this.message = "Successful.";
 
-      this.roles = user.roles;
+      this.data = { ...(user as IUser).toObject(), password: "" };
 
-      response.setData(this.roles);
+      this.response.setSuccessfulResponse(this.message, this.data);
 
       req.login(user, (err) => {
         if (err) {
           throw new CustomError("Authentication failed.", { statusCode: 500 });
         }
 
-        return res.json(response.toJSON());
+        return res.status(201).json(this.response.toJSON());
       });
     }
   );
 
-  loginUser = this.asyncHandler.handle(
+  loginUserWithLocalCredentials = this.asyncHandler.handler(
     async (req: Request, res: Response, next: NextFunction) => {
       passport.authenticate(
         "local",
-        async (err: Error, user: IUser, info: any) => {
+        async (err: Error, { _id }: IUser, info: any) => {
           if (err) {
             return next(err);
           }
 
-          if (!user) {
-            const response = container.resolve(ApiResponse<null>);
+          if (!_id) {
+            this.message = info.message || `Failed to authenticate user.`;
 
-            response.setIsAuthenticated(false);
-            response.setIsAuthorised(false);
-            response.setState(false);
-            response.setMessage(info.message);
+            this.response.setUnauthenticatedResponse(this.message);
 
-            return res.status(404).json(response.toJSON());
+            return res.status(404).json(this.response.toJSON());
           }
 
-          req.logIn(user, (err) => {
+          const user = await this.userService.getUserById(_id);
+
+          req.logIn({ _id }, (err) => {
             if (err) {
               return next(err);
             }
 
-            req.user = {
-              ...user,
-              password: "",
-            } as IUser;
+            this.message = "User logged in successfully.";
 
-            const response = container.resolve(ApiResponse<Role[]>);
+            this.data = user as IUser;
 
-            this.roles = user.toObject().roles;
+            this.response.setSuccessfulResponse(this.message, this.data);
 
-            response.setResponseSuccessful("User logged in successfully.");
+            return res.status(200).json(this.response.toJSON());
+          });
+        }
+      )(req, res, next);
+    }
+  );
 
-            response.setData(this.roles);
+  loginUserWithGoogleCredentials = this.asyncHandler.handler(
+    passport.authenticate("google", { scope: ["profile", "email"] })
+  );
 
-            return res.status(200).json(response.toJSON());
+  loginRedirect = this.asyncHandler.handler(
+    async (req: Request, res: Response, next: NextFunction) => {
+      passport.authenticate(
+        "google",
+        async (err: Error, { _id }: IUser, info: any) => {
+          if (err) {
+            return next(err);
+          }
+
+          if (!_id) {
+            throw new CustomError("Authentication failed.", {
+              statusCode: 401,
+            });
+          }
+
+          const user = await this.userService.getUserById(_id);
+
+          req.logIn({ _id }, (err) => {
+            if (err) {
+              return next(err);
+            }
+
+            this.message = "User logged in successfully.";
+
+            this.data = user as IUser;
+
+            this.response.setSuccessfulResponse(this.message, this.data);
+
+            return res.status(200).json(this.response.toJSON());
           });
         }
       )(req, res, next);

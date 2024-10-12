@@ -1,12 +1,11 @@
 import mongoose, { Document, Schema } from "mongoose";
-
-interface Address {
-  street: string;
-  city: string;
-  state: string;
-  zipCode: string;
-  country: string;
-}
+import {
+  acceptedRoleNames,
+  CareTakerRoleSchema,
+  OwnerRoleSchema,
+  Role,
+} from "./Role";
+import { Address } from "./Address";
 
 interface EmergencyContact {
   name: string;
@@ -14,18 +13,8 @@ interface EmergencyContact {
   phone: string;
 }
 
-export interface Role {
-  roleName: "Owner" | "Care-taker" | "Tenant" | "Guest";
-  // properties: [Propero];
-  businessAddress?: Address;
-  bankAccountDetails?: {
-    accountNumber: string;
-    bankName: string;
-    routingNumber: string;
-  };
-}
-
 export interface IUser extends Document {
+  _id: string;
   name?: string;
   email: string;
   phone: string;
@@ -33,24 +22,27 @@ export interface IUser extends Document {
   address?: Address;
   profilePicture?: string;
   emergencyContact?: EmergencyContact;
-  roles: Role[];
+  roles: [];
   selectedRole: string;
+  googleId?: string;
   createdDate: Date;
   lastUpdated: Date;
+  facebookId?: string;
 }
 
-const UserSchema: Schema = new Schema({
+const UserSchema: Schema<IUser> = new Schema({
   name: { type: String },
   email: { type: String, required: true, unique: true },
   phone: { type: String },
   password: { type: String, required: true },
   googleId: { type: String },
+  facebookId: { type: String },
   address: {
     street: { type: String },
     city: { type: String },
     state: { type: String },
     zipCode: { type: String },
-    country: { type: String },
+    block: { type: String },
   },
   profilePicture: { type: String },
   emergencyContact: {
@@ -61,31 +53,11 @@ const UserSchema: Schema = new Schema({
   selectedRole: {
     type: String,
     enum: ["Owner", "Care-taker", "Tenant", "Guest"],
-    default: "Guest",
+    default: acceptedRoleNames.Guest,
   },
-  roles: [
-    {
-      roleName: {
-        type: String,
-        required: true,
-        default: "Guest",
-        enum: ["Owner", "Care-taker", "Tenant", "Guest"],
-      },
-      businessAddress: {
-        street: { type: String },
-        city: { type: String },
-        state: { type: String },
-        zipCode: { type: String },
-        country: { type: String },
-      },
-      bankAccountDetails: {
-        accountNumber: { type: String },
-        bankName: { type: String },
-        routingNumber: { type: String },
-      },
-    },
-  ],
+  roles: [{ type: Schema.Types.Mixed }],
   createdDate: { type: Date, default: Date.now },
   lastUpdated: { type: Date, default: Date.now },
 });
+
 export default mongoose.model<IUser>("User", UserSchema);

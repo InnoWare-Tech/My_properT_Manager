@@ -52,7 +52,7 @@ class App {
 
   private initializeRoutes() {
     // Use the appRouter's routes
-    this.app.use(this.appRouter.appRouter);
+    this.app.use("/api/v1", this.appRouter.appRouter);
   }
 
   private async connectDB() {

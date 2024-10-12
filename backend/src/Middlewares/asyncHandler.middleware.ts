@@ -1,66 +1,84 @@
 import { injectable } from "tsyringe";
 import { NextFunction, Request, Response } from "express";
 import { MongoServerError } from "mongodb";
-import IApiResponse from "../Utils/apiResponse.interface";
 import CustomError from "../Utils/customError.model";
+import ApiResponse from "../Utils/apiResponse.model";
 
 @injectable()
 class AsyncHandler {
-  handle(
+  constructor(private response: ApiResponse<null>) {}
+
+  private handleDuplicate(error: MongoServerError) {
+    const errorMessage = error.errmsg;
+
+    const collectionRegex = /collection: (\S+)/;
+
+    const match = errorMessage.match(collectionRegex);
+
+    if (match && match[1]) {
+      if (match[1].split(".")[1] === "users") {
+        //setting a failed response if the user is duplicate in the collection
+        this.response.setFailedResponse(
+          "Invalid user credentials.",
+          false,
+          false
+        );
+      } else {
+        //setting a failed response if the collection is having thesame properties provided
+        const key = Object.keys(error.keyValue)[0]; // dynamically gets the key, e.g. 'name'
+        const value = error.keyValue[key];
+
+        this.response.setFailedResponse(
+          `${value} already exists in ${match[1].split(".")[1]}`
+        );
+      }
+    } else {
+      this.response.setFailedResponse(
+        "Collection name not found in error message."
+      );
+    }
+
+    return this.response.toJSON();
+  }
+
+  private handleOtherError(error: CustomError) {
+    const { isAuthenticated, isAuthorised } = error.details;
+
+    this.response.setFailedResponse(
+      error.message,
+      isAuthenticated,
+      isAuthorised
+    );
+
+    return this.response.toJSON();
+  }
+
+  handler(
     fn: (req: Request, res: Response, next: NextFunction) => Promise<any>
   ) {
-    return async (
-      req: Request,
-      res: Response<IApiResponse<null>>,
-      next: NextFunction
-    ) => {
+    return async (req: Request, res: Response, next: NextFunction) => {
       try {
         await fn(req, res, next);
       } catch (error) {
-        let response: IApiResponse<null> = {
-          state: false,
-          message: "",
-          isAuthorised: true,
-          isAuthenticated: true,
-        };
+        //handle mongoDb cast type errors
+        if ((error as Error).name === "CastError") {
+          this.response.setFailedResponse("Invalid request type.");
+
+          return res.status(500).json(this.response.toJSON());
+        }
 
         // Handle MongoDB duplicate key error
         if (error instanceof MongoServerError && error.code === 11000) {
-          const errorMessage = error.errmsg;
-          const collectionRegex = /collection: (\S+)/;
-          const match = errorMessage.match(collectionRegex);
-
-          if (match && match[1]) {
-            if (match[1].split(".")[1] === "users") {
-              response.message = "Invalid user credentials.";
-              response.isAuthorised = false;
-              response.isAuthenticated = false;
-            } else {
-              response.message = `${error.keyValue.email} already exists in ${
-                match[1].split(".")[1]
-              }`;
-            }
-          } else {
-            response.message = "Collection name not found in error message.";
-          }
-          return res.status(409).json(response);
-        }
-
-        if (error instanceof Error) {
-          response.message = error.message;
-
-          if ("details" in error) {
-            const errDetails = (error as CustomError).details;
-            response.isAuthenticated = errDetails?.isAuthenticated ?? true;
-            response.isAuthorised = errDetails?.isAuthorised ?? true;
-          }
+          return res.status(409).json(this.handleDuplicate(error));
         }
 
         if (error instanceof CustomError) {
-          return res.status(error.details.statusCode).json(response);
+          const { statusCode } = error.details;
+
+          return res.status(statusCode).json(this.handleOtherError(error));
         }
 
-        return res.status(500).json(response);
+        // return res.status(500).json(response);
       }
     };
   }
